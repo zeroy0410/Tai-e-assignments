@@ -33,21 +33,10 @@ import pascal.taie.analysis.graph.cfg.CFGBuilder;
 import pascal.taie.analysis.graph.cfg.Edge;
 import pascal.taie.config.AnalysisConfig;
 import pascal.taie.ir.IR;
-import pascal.taie.ir.exp.ArithmeticExp;
-import pascal.taie.ir.exp.ArrayAccess;
-import pascal.taie.ir.exp.CastExp;
-import pascal.taie.ir.exp.FieldAccess;
-import pascal.taie.ir.exp.NewExp;
-import pascal.taie.ir.exp.RValue;
-import pascal.taie.ir.exp.Var;
-import pascal.taie.ir.stmt.AssignStmt;
-import pascal.taie.ir.stmt.If;
-import pascal.taie.ir.stmt.Stmt;
-import pascal.taie.ir.stmt.SwitchStmt;
+import pascal.taie.ir.exp.*;
+import pascal.taie.ir.stmt.*;
 
-import java.util.Comparator;
-import java.util.Set;
-import java.util.TreeSet;
+import java.util.*;
 
 public class DeadCodeDetection extends MethodAnalysis {
 
@@ -71,6 +60,94 @@ public class DeadCodeDetection extends MethodAnalysis {
         Set<Stmt> deadCode = new TreeSet<>(Comparator.comparing(Stmt::getIndex));
         // TODO - finish me
         // Your task is to recognize dead code in ir and add it to deadCode
+        ArrayDeque<Stmt> queue = new ArrayDeque<>();
+        Set<Stmt> reachable = new HashSet<>();
+        Set<Stmt> visited = new TreeSet<>(Comparator.comparing(Stmt::getIndex));
+        queue.add(cfg.getEntry());
+        visited.add(cfg.getEntry());
+        while(!queue.isEmpty()) {
+            Stmt head = queue.pollFirst();
+            reachable.add(head);
+            boolean add_all = false;
+            if(head instanceof If if_stmt) {
+                Var v1 = if_stmt.getCondition().getOperand1();
+                Var v2 = if_stmt.getCondition().getOperand2();
+                if(constants.getOutFact(head).get(v1).isConstant() && constants.getOutFact(head).get(v2).isConstant()) {
+                    Value val = ConstantPropagation.evaluate(((If) head).getCondition(),constants.getOutFact(head));
+                    if(val.getConstant() == 1) {
+                        for(Edge<Stmt> edge: cfg.getOutEdgesOf(head)) {
+                            if(edge.getKind() == Edge.Kind.IF_TRUE) {
+                                if(!visited.contains(edge.getTarget())){
+                                    queue.add(edge.getTarget());
+                                    visited.add(edge.getTarget());
+                                }
+                            }
+                        }
+                    } else {
+                        for (Edge<Stmt> edge : cfg.getOutEdgesOf(head)) {
+                            if (edge.getKind() == Edge.Kind.IF_FALSE) {
+                                if (!visited.contains(edge.getTarget())) {
+                                    queue.add(edge.getTarget());
+                                    visited.add(edge.getTarget());
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    add_all = true;
+                }
+            }
+            else if(head instanceof SwitchStmt switch_stmt) {
+                Var v1 = switch_stmt.getVar();
+                if(constants.getOutFact(head).get(v1).isConstant()) {
+                    boolean matched = false;
+                    for(Edge<Stmt> edge: cfg.getOutEdgesOf(head)) {
+                        if(edge.isSwitchCase() && edge.getCaseValue() == constants.getOutFact(head).get(v1).getConstant()) {
+                            matched = true;
+                            if(!visited.contains(edge.getTarget())) {
+                                queue.add(edge.getTarget());
+                                visited.add(edge.getTarget());
+                            }
+                        }
+                    }
+                    if(!matched) {
+                        Stmt defaultTarget = switch_stmt.getDefaultTarget();  // 获取default对应的目标语句
+                        if(!visited.contains(defaultTarget)) {
+                            queue.add(defaultTarget);
+                            visited.add(defaultTarget);
+                        }
+                    }
+                } else {
+                    add_all = true;
+                }
+            }
+            else if(head instanceof AssignStmt assign_stmt) {
+                add_all = true;
+                LValue v = assign_stmt.getLValue();
+                RValue r = assign_stmt.getRValue();
+                if(v instanceof Var val) {
+                    if(!liveVars.getResult(head).contains(val) && hasNoSideEffect(r)) {
+                        reachable.remove(head);
+                    }
+                }
+            }
+            else {
+                add_all = true;
+            }
+            if(add_all) {
+                for(Edge<Stmt> edge: cfg.getOutEdgesOf(head)) {
+                    if(!visited.contains(edge.getTarget())){
+                        queue.add(edge.getTarget());
+                        visited.add(edge.getTarget());
+                    }
+                }
+            }
+        }
+        for(Stmt stmt: ir) {
+            if(!reachable.contains(stmt)) {
+                deadCode.add(stmt);
+            }
+        }
         return deadCode;
     }
 
