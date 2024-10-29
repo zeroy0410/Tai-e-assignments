@@ -24,6 +24,7 @@ package pascal.taie.analysis.dataflow.inter;
 
 import pascal.taie.analysis.dataflow.analysis.constprop.CPFact;
 import pascal.taie.analysis.dataflow.analysis.constprop.ConstantPropagation;
+import pascal.taie.analysis.dataflow.analysis.constprop.Value;
 import pascal.taie.analysis.graph.cfg.CFG;
 import pascal.taie.analysis.graph.cfg.CFGBuilder;
 import pascal.taie.analysis.graph.icfg.CallEdge;
@@ -33,6 +34,7 @@ import pascal.taie.analysis.graph.icfg.ReturnEdge;
 import pascal.taie.config.AnalysisConfig;
 import pascal.taie.ir.IR;
 import pascal.taie.ir.exp.InvokeExp;
+import pascal.taie.ir.exp.LValue;
 import pascal.taie.ir.exp.Var;
 import pascal.taie.ir.stmt.Invoke;
 import pascal.taie.ir.stmt.Stmt;
@@ -77,36 +79,67 @@ public class InterConstantPropagation extends
     @Override
     protected boolean transferCallNode(Stmt stmt, CPFact in, CPFact out) {
         // TODO - finish me
-        return false;
+        return out.copyFrom(in);
     }
 
     @Override
     protected boolean transferNonCallNode(Stmt stmt, CPFact in, CPFact out) {
         // TODO - finish me
-        return false;
+        return transferNode(stmt, in, out);
     }
 
     @Override
     protected CPFact transferNormalEdge(NormalEdge<Stmt> edge, CPFact out) {
         // TODO - finish me
-        return null;
+        return out;
     }
 
     @Override
     protected CPFact transferCallToReturnEdge(CallToReturnEdge<Stmt> edge, CPFact out) {
         // TODO - finish me
-        return null;
+        CPFact copy = out.copy();
+        if (edge.getSource().getDef().isPresent()) {
+            LValue lValue = edge.getSource().getDef().get();
+            if (lValue instanceof Var lVar) {
+                copy.remove(lVar);
+            }
+        }
+        return copy;
     }
 
     @Override
     protected CPFact transferCallEdge(CallEdge<Stmt> edge, CPFact callSiteOut) {
         // TODO - finish me
-        return null;
+        CPFact newCPFact = newInitialFact();
+        JMethod callee = edge.getCallee();  // 被调用方法
+        Stmt source = edge.getSource();
+        if (source instanceof Invoke invoke) {
+            InvokeExp invokeExp = invoke.getRValue();
+            for (int i = 0; i < invokeExp.getArgCount(); i++) {
+                Var actual = invokeExp.getArg(i);
+                Value value = callSiteOut.get(actual);
+                Var formal = callee.getIR().getParam(i);
+                newCPFact.update(formal, value);
+            }
+        }
+        return newCPFact;
     }
 
     @Override
     protected CPFact transferReturnEdge(ReturnEdge<Stmt> edge, CPFact returnOut) {
         // TODO - finish me
-        return null;
+        CPFact newCPFact = newInitialFact();
+        Stmt callSite = edge.getCallSite();
+        if (callSite.getDef().isPresent()) {
+            Value value = Value.getUndef();  // 返回值
+            for (Var returnVar : edge.getReturnVars()) {
+                value = cp.meetValue(value, returnOut.get(returnVar));
+            }
+            LValue lValue = callSite.getDef().get();
+            if (lValue instanceof Var lVar) {
+                newCPFact.update(lVar, value);
+            }
+        }
+        return newCPFact;
     }
 }
