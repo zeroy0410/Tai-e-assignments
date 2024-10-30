@@ -85,7 +85,7 @@ public class InterConstantPropagation extends
     @Override
     protected boolean transferNonCallNode(Stmt stmt, CPFact in, CPFact out) {
         // TODO - finish me
-        return transferNode(stmt, in, out);
+        return cp.transferNode(stmt, in, out);
     }
 
     @Override
